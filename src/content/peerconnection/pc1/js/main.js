@@ -41,6 +41,9 @@ remoteVideo.addEventListener('resize', () => {
 });
 
 let localStream;
+
+const p2Streams = [];
+
 let pc1;
 let pc2;
 const offerOptions = {
@@ -67,6 +70,10 @@ async function start() {
     callButton.disabled = false;
   } catch (e) {
     alert(`getUserMedia() error: ${e.name}`);
+  }
+  for (let i=0; i<4; i++) {
+    const s = await navigator.mediaDevices.getUserMedia({video: true});
+    p2Streams.push(s);
   }
 }
 
@@ -95,7 +102,33 @@ async function call() {
   pc2.addEventListener('iceconnectionstatechange', e => onIceStateChange(pc2, e));
   pc2.addEventListener('track', gotRemoteStream);
 
+  pc1.addEventListener('track', gotRemoteStream1);
+
+  // Prevent the loop if something fails or the loop in general
+  let doneOnce = false;
+  pc2.addEventListener('negotiationneeded', async (e)=>{
+    if (doneOnce) {
+      return;
+    }
+    try {
+      const offer = await pc1.createOffer();
+      await pc1.setLocalDescription(offer);
+
+      await pc2.setRemoteDescription(offer);
+      const answer = await pc2.createAnswer(offer);
+      console.info('Answer', answer);
+      await pc2.setLocalDescription(answer);
+
+      await pc1.setRemoteDescription(answer);
+    } finally {
+      doneOnce = true;
+    }
+  });
+
   localStream.getTracks().forEach(track => pc1.addTrack(track, localStream));
+  pc1.addTransceiver('video');
+  pc1.addTransceiver('video');
+  pc1.addTransceiver('video');
   console.log('Added local stream to pc1');
 
   try {
@@ -160,6 +193,13 @@ function gotRemoteStream(e) {
   }
 }
 
+function gotRemoteStream1(e) {
+  if (remoteVideo.srcObject !== e.streams[0]) {
+    remoteVideo.srcObject = e.streams[0];
+    console.log('pc1 received remote stream');
+  }
+}
+
 async function onCreateAnswerSuccess(desc) {
   console.log(`Answer from pc2:\n${desc.sdp}`);
   console.log('pc2 setLocalDescription start');
@@ -169,6 +209,11 @@ async function onCreateAnswerSuccess(desc) {
   } catch (e) {
     onSetSessionDescriptionError(e);
   }
+
+  for (const s of p2Streams) {
+    s.getTracks().forEach(track => pc2.addTrack(track, s));
+  }
+
   console.log('pc1 setRemoteDescription start');
   try {
     await pc1.setRemoteDescription(desc);
